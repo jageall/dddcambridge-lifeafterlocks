@@ -175,6 +175,7 @@ namespace ConsoleApplication4
         public AllocateSeats(Guid orderId, int amount)
         {
             _orderId = orderId;
+            Correlation = _orderId;
             _amount = amount;
         }
 

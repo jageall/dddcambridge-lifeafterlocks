@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using ConsoleApplication4;
 
@@ -284,31 +286,215 @@ namespace ConsoleApplication4
 
     class InMemoryBus : IBus
     {
+        private readonly QueuedHandler _queue;
+        private readonly ThreadBasedPump _thread;
+
+        public InMemoryBus()
+        {
+            _queue = new QueuedHandler(new Dispatcher());
+            _thread = new ThreadBasedPump(_queue);
+        }
         public void Publish(Message msg)
         {
-            throw new NotImplementedException();
+            _queue.Handle(msg);
         }
 
-        public void Start() { }
+        public void Start()
+        {
+            _thread.Start();
+        }
     }
 
-    class Dispatcher
+    class Dispatcher : IHandle<Dispatcher.SubscribeTo>, IHandle<Dispatcher.UnsubscribeFrom>, IHandle<Message>
     {
-        public void Dispatch(Message msg)
+        private readonly Dictionary<Type, List<IWrappedHandler>> _handlers;
+
+        public Dispatcher()
         {
-            
+            _handlers = new Dictionary<Type, List<IWrappedHandler>>();
+            var s = (IHandle<Dispatcher.SubscribeTo>) this;
+            s.Handle((SubscribeTo)Subscribe<SubscribeTo>(this));
+            s.Handle((SubscribeTo)Subscribe<UnsubscribeFrom>(this));
+        }
+        public void Handle  (Message msg)
+        {
+            var msgType = msg.GetType();
+            do
+            {
+                List<IWrappedHandler> handlers;
+                if (_handlers.TryGetValue(msgType, out handlers))
+                {
+                    foreach (var handler in handlers)
+                        handler.Handle(msg);
+                }
+                msgType = msgType.BaseType;
+            } while (msgType != typeof (object) && msgType != null);
         }
         public static Message Subscribe<T>(IHandle<T> handler) where T : Message
         {
-            return new SubscribeTo();
+            return new SubscribeTo(typeof(T), handler, () => new WrappedHandler<T>(handler));
         }
 
         public static Message Unsubscribe<T>(IHandle<T> handler) where T : Message
         {
-            return new UnsubscribeFrom();
+            return new UnsubscribeFrom(typeof(T), handler);
         }
 
-        class SubscribeTo: Message{}
-        class UnsubscribeFrom : Message{}
+        interface IWrappedHandler
+        {
+            void Handle(Message msg);
+            bool IsSame(object other);
+        }
+
+        class WrappedHandler<T> : IWrappedHandler where T : Message
+        {
+            private readonly IHandle<T> _handler;
+
+            public WrappedHandler(IHandle<T> handler)
+            {
+                _handler = handler;
+            }
+
+            public void Handle(Message msg)
+            {
+                _handler.Handle((T)msg);
+            }
+
+            public bool IsSame(object other)
+            {
+                return ReferenceEquals(_handler, other);
+            }
+        }
+
+        class SubscribeTo : Message
+        {
+            private readonly Type _type;
+            private readonly object _handler;
+            private readonly Func<IWrappedHandler> _createHandler;
+
+            public SubscribeTo(Type type, object handler, Func<IWrappedHandler> createHandler )
+            {
+                _type = type;
+                _handler = handler;
+                _createHandler = createHandler;
+            }
+
+            public Type Type
+            {
+                get { return _type; }
+            }
+
+            public object Handler
+            {
+                get { return _handler; }
+            }
+
+            public Func<IWrappedHandler> CreateHandler
+            {
+                get { return _createHandler; }
+            }
+        }
+
+        class UnsubscribeFrom : Message
+        {
+            private readonly Type _type;
+            private readonly object _handler;
+
+            public UnsubscribeFrom(Type type, object handler)
+            {
+                _type = type;
+                _handler = handler;
+            }
+
+            public Type Type
+            {
+                get { return _type; }
+            }
+
+            public object Handler
+            {
+                get { return _handler; }
+            }
+        }
+
+        void IHandle<SubscribeTo>.Handle(SubscribeTo msg)
+        {
+            List<IWrappedHandler> handlers;
+            if (!_handlers.TryGetValue(msg.Type, out handlers))
+            {
+                handlers = new List<IWrappedHandler>();
+                _handlers.Add(msg.Type, handlers);
+            }
+            if (!handlers.Any(x => x.IsSame(msg.Handler)))
+            {
+                handlers.Add(msg.CreateHandler());
+            }
+        }
+
+        void IHandle<UnsubscribeFrom>.Handle(UnsubscribeFrom msg)
+        {
+            List<IWrappedHandler> handlers;
+            if (_handlers.TryGetValue(msg.Type, out handlers))
+            {
+                var handler = handlers.FirstOrDefault(x => x.IsSame(msg.Handler));
+                handlers.Remove(handler);
+            }
+        }
+    }
+
+    class QueuedHandler : IHandle<Message>, IProcessor
+    {
+        private readonly IHandle<Message> _handler;
+        private readonly ConcurrentQueue<Message> _queue;
+
+        public QueuedHandler(IHandle<Message> handler)
+        {
+            _handler = handler;
+            _queue = new ConcurrentQueue<Message>();
+        }
+
+        public void Handle(Message msg)
+        {
+            _queue.Enqueue(msg);
+        }
+
+        public bool Process()
+        {
+            Message msg;
+            if (_queue.TryDequeue(out msg))
+            {
+                _handler.Handle(msg);
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    class ThreadBasedPump
+    {
+        private readonly IProcessor _processor;
+        private readonly Thread _thread;
+
+        public ThreadBasedPump(IProcessor processor)
+        {
+            _processor = processor;
+            _thread = new Thread(Process);
+            
+        }
+
+        public void Start()
+        {
+            _thread.Start();
+        }
+
+        private void Process()
+        {
+            while (true)
+            {
+                while (_processor.Process()){}
+                Thread.Sleep(1);
+            }
+        }
     }
 }

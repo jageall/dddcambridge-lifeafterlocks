@@ -9,11 +9,11 @@ namespace ConsoleApplication4
     {
         private static void Main()
         {
-            ISeatAllocationService allocator = new OriginalSeatAllocationService();
-            RunSeatAllocation(allocator);
-
-            //ISeatAllocationService allocator = CreateMessagingAllocator();
+            //ISeatAllocationService allocator = new OriginalSeatAllocationService();
             //RunSeatAllocation(allocator);
+
+            ISeatAllocationService allocator = CreateMessagingAllocator();
+            RunSeatAllocation(allocator);
         }
 
         private static ISeatAllocationService CreateMessagingAllocator()
