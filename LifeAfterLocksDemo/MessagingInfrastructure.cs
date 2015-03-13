@@ -10,6 +10,7 @@ using ConsoleApplication4;
 
 namespace ConsoleApplication4
 {
+    
     public abstract class Message
     {
         public Guid Correlation { get; set; }
@@ -35,6 +36,7 @@ namespace ConsoleApplication4
 
     }
 
+    #region stuff
     class TaskBridge
     {
         private readonly IBus _bus;
@@ -283,11 +285,12 @@ namespace ConsoleApplication4
         }
     }
     
+#endregion
 
     class InMemoryBus : IBus
     {
         private readonly QueuedHandler _queue;
-        private readonly ThreadBasedPump _thread;
+        private ThreadBasedPump _thread;
 
         public InMemoryBus()
         {
@@ -305,31 +308,72 @@ namespace ConsoleApplication4
         }
     }
 
-    class Dispatcher : IHandle<Dispatcher.SubscribeTo>, IHandle<Dispatcher.UnsubscribeFrom>, IHandle<Message>
+    class QueuedHandler : IHandle<Message>, IProcessor
+    {
+        private readonly IHandle<Message> _next;
+        private readonly ConcurrentQueue<Message> _queue;
+
+        public QueuedHandler(IHandle<Message> next )
+        {
+            _next = next;
+            _queue = new ConcurrentQueue<Message>();
+        }
+
+        public void Handle(Message msg)
+        {
+            _queue.Enqueue(msg);
+        }
+
+        public bool Process()
+        {
+            Message msg;
+            if (_queue.TryDequeue(out msg))
+            {
+                _next.Handle(msg);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    class ThreadBasedPump
+    {
+        private readonly IProcessor _processor;
+        private Thread _thread;
+
+        public ThreadBasedPump(IProcessor processor)
+        {
+            _processor = processor;
+            _thread = new Thread(Process);
+        }
+
+        private void Process()
+        {
+            while (true)
+            {
+                while(_processor.Process()){}
+                Thread.Sleep(1);
+            }
+        }
+
+        public void Start()
+        {
+            _thread.Start();
+        }
+    }
+
+    class Dispatcher : IHandle<Message> , IHandle<Dispatcher.SubscribeTo>, IHandle<Dispatcher.UnsubscribeFrom>
     {
         private readonly Dictionary<Type, List<IWrappedHandler>> _handlers;
 
         public Dispatcher()
         {
             _handlers = new Dictionary<Type, List<IWrappedHandler>>();
-            var s = (IHandle<Dispatcher.SubscribeTo>) this;
+            var s = (IHandle<SubscribeTo>) this;
             s.Handle((SubscribeTo)Subscribe<SubscribeTo>(this));
             s.Handle((SubscribeTo)Subscribe<UnsubscribeFrom>(this));
         }
-        public void Handle  (Message msg)
-        {
-            var msgType = msg.GetType();
-            do
-            {
-                List<IWrappedHandler> handlers;
-                if (_handlers.TryGetValue(msgType, out handlers))
-                {
-                    foreach (var handler in handlers)
-                        handler.Handle(msg);
-                }
-                msgType = msgType.BaseType;
-            } while (msgType != typeof (object) && msgType != null);
-        }
+
         public static Message Subscribe<T>(IHandle<T> handler) where T : Message
         {
             return new SubscribeTo(typeof(T), handler, () => new WrappedHandler<T>(handler));
@@ -372,7 +416,7 @@ namespace ConsoleApplication4
             private readonly object _handler;
             private readonly Func<IWrappedHandler> _createHandler;
 
-            public SubscribeTo(Type type, object handler, Func<IWrappedHandler> createHandler )
+            public SubscribeTo(Type type, object handler, Func<IWrappedHandler> createHandler)
             {
                 _type = type;
                 _handler = handler;
@@ -417,6 +461,23 @@ namespace ConsoleApplication4
             }
         }
 
+        public void Handle(Message msg)
+        {
+            var type = msg.GetType();
+            do
+            {
+                List<IWrappedHandler> handlers;
+                if (_handlers.TryGetValue(type, out handlers))
+                {
+                    foreach (var handler in handlers)
+                    {
+                        handler.Handle(msg);
+                    }
+                }
+                type = type.BaseType;
+            } while (type != typeof (object) && type != null);
+        }
+
         void IHandle<SubscribeTo>.Handle(SubscribeTo msg)
         {
             List<IWrappedHandler> handlers;
@@ -437,63 +498,10 @@ namespace ConsoleApplication4
             if (_handlers.TryGetValue(msg.Type, out handlers))
             {
                 var handler = handlers.FirstOrDefault(x => x.IsSame(msg.Handler));
-                handlers.Remove(handler);
-            }
-        }
-    }
-
-    class QueuedHandler : IHandle<Message>, IProcessor
-    {
-        private readonly IHandle<Message> _handler;
-        private readonly ConcurrentQueue<Message> _queue;
-
-        public QueuedHandler(IHandle<Message> handler)
-        {
-            _handler = handler;
-            _queue = new ConcurrentQueue<Message>();
-        }
-
-        public void Handle(Message msg)
-        {
-            _queue.Enqueue(msg);
-        }
-
-        public bool Process()
-        {
-            Message msg;
-            if (_queue.TryDequeue(out msg))
-            {
-                _handler.Handle(msg);
-                return true;
-            }
-
-            return false;
-        }
-    }
-
-    class ThreadBasedPump
-    {
-        private readonly IProcessor _processor;
-        private readonly Thread _thread;
-
-        public ThreadBasedPump(IProcessor processor)
-        {
-            _processor = processor;
-            _thread = new Thread(Process);
-            
-        }
-
-        public void Start()
-        {
-            _thread.Start();
-        }
-
-        private void Process()
-        {
-            while (true)
-            {
-                while (_processor.Process()){}
-                Thread.Sleep(1);
+                if(handler != null)
+                {
+                    handlers.Remove(handler);
+                }
             }
         }
     }

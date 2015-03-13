@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace ConsoleApplication4
@@ -47,14 +46,14 @@ namespace ConsoleApplication4
         {
             lock (AllocatedSeats)
             {
-                return AllocatedSeats.Where(x => x.OrderId == id);
+                return AllocatedSeats.Where(x => x.OrderId == id).ToArray();
             }
         }
 
         public void CancellOrder(Guid id)
         {
-            lock (AllocatedSeats)
-                lock (UnallocatedSeats)
+            lock (UnallocatedSeats)
+                lock (AllocatedSeats)
                 {
                     var seats = AllocatedSeats.Where(x => x.OrderId == id).Select(x => x.SeatNumber);
                     UnallocatedSeats.AddRange(seats);

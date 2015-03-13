@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Runtime.CompilerServices;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace ConsoleApplication4
@@ -14,20 +12,6 @@ namespace ConsoleApplication4
 
             ISeatAllocationService allocator = CreateMessagingAllocator();
             RunSeatAllocation(allocator);
-        }
-
-        private static ISeatAllocationService CreateMessagingAllocator()
-        {
-            var bus = new InMemoryBus();
-            var bridge = new TaskBridge(bus);
-            var service = new SeatAllocationWithMessaging(bus);
-            bus.Subscribe<AllocateSeats>(service);
-            bus.Subscribe<GetSeatsForOrder>(service);
-            bus.Subscribe<CancelOrder>(service);
-            bus.SubscribeAll(new CorrelationManager(bus));
-            var allocator = new MessagingSeatAllocationService(bridge);
-            bus.Start();
-            return allocator;
         }
 
         private static void RunSeatAllocation(ISeatAllocationService allocator)
@@ -58,7 +42,25 @@ namespace ConsoleApplication4
             }
             return "Booked " + string.Join(",", results);
         }
+
+
+
+
+
+
+
+        private static ISeatAllocationService CreateMessagingAllocator()
+        {
+            var bus = new InMemoryBus();
+            var bridge = new TaskBridge(bus);
+            var service = new SeatAllocationWithMessaging(bus);
+            bus.Subscribe<AllocateSeats>(service);
+            bus.Subscribe<GetSeatsForOrder>(service);
+            bus.Subscribe<CancelOrder>(service);
+            bus.SubscribeAll(new CorrelationManager(bus));
+            var allocator = new MessagingSeatAllocationService(bridge);
+            bus.Start();
+            return allocator;
+        }
     }
-    
-    
 }
